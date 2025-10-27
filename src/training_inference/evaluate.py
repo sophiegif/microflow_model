@@ -13,11 +13,11 @@ def evaluate_training(args, device, model, val_loader=None, loss_function=None, 
     model.eval()
     val_dataset_count = len(val_loader.dataset)
     val_batches_count = val_dataset_count / args.train_batch_size
-    
+
     val_loss = 0
     val_errors = [0 for _ in metrics]
     val_errors_steps = [[0 for _ in metrics] for _ in range(model.max_iterations)]
-    val_errors_by_scaling_factor = {0: defaultdict(int), 1: defaultdict(int), 2: defaultdict(int), 3: defaultdict(int)}  
+    val_errors_by_scaling_factor = {0: defaultdict(int), 1: defaultdict(int), 2: defaultdict(int), 3: defaultdict(int)}
 
     for _, batchv in enumerate(tqdm(val_loader)):
         val_input = batchv['pre_post_image'].to(device, non_blocking=args.non_blocking)
@@ -25,37 +25,39 @@ def evaluate_training(args, device, model, val_loader=None, loss_function=None, 
         images_no_normalization = batchv['pre_post_image_no_normalization'].to(device, non_blocking=args.non_blocking)
         scaling_factors = batchv['scaling_factor']
         b, c, h, w = val_input.shape
-        input_model = torch.cat([val_input, images_no_normalization[:, 1].view(b, 1, h, w), images_no_normalization[:, 0].view(b, 1, h, w)], dim=1)
+        input_model = torch.cat(
+            [val_input, images_no_normalization[:, 1].view(b, 1, h, w), images_no_normalization[:, 0].view(b, 1, h, w)],
+            dim=1)
         with (torch.no_grad()):
             with torch.cuda.amp.autocast(enabled=args.amp, dtype=torch.float16):
                 optical_flow_predictions = model(input_model, args=args)
 
-                if loss_function is not None:       
-                    val_outputs = optical_flow_predictions if args.loss == "raft" else optical_flow_predictions[-1]      
+                if loss_function is not None:
+                    val_outputs = optical_flow_predictions if args.loss == "raft" else optical_flow_predictions[-1]
                     loss = loss_function(val_outputs, val_target)
-                    val_loss += loss.item() / val_batches_count 
+                    val_loss += loss.item() / val_batches_count
 
                 for metric_id, metric in enumerate(metrics):
                     # global metric
                     update_full_image_error(
-                        metric, 
-                        optical_flow_predictions[-1], 
-                        val_target, 
-                        val_errors, 
-                        metric_id, 
+                        metric,
+                        optical_flow_predictions[-1],
+                        val_target,
+                        val_errors,
+                        metric_id,
                         val_batches_count
-                        )
-                
+                    )
+
                     # metric at each step
                     for step in range(len(optical_flow_predictions)):
                         update_full_image_error(
-                            metric, 
-                            optical_flow_predictions[step], 
-                            val_target, 
-                            val_errors_steps[step], 
-                            metric_id, 
+                            metric,
+                            optical_flow_predictions[step],
+                            val_target,
+                            val_errors_steps[step],
+                            metric_id,
                             val_batches_count
-                            )
+                        )
 
                     # metric at each scaling factor
                     b, c, h, w = val_target.shape
@@ -69,11 +71,12 @@ def evaluate_training(args, device, model, val_loader=None, loss_function=None, 
                             val_target[mask],
                             val_errors_by_scaling_factor[sf],
                             metric_id,
-                            val_dataset_count / len(scaling_factors) / sum(mask)  # done per scaling factor, so the count needs to be adjusted
+                            val_dataset_count / len(scaling_factors) / sum(mask)
+                            # done per scaling factor, so the count needs to be adjusted
                         )
 
-    return val_loss, val_errors, val_errors_steps, val_errors_by_scaling_factor 
-      
+    return val_loss, val_errors, val_errors_steps, val_errors_by_scaling_factor
+
 
 def evaluate_inference(
         args, device, model, loader=None, photometric_metrics=None, smoothness_metrics=None,
@@ -88,11 +91,13 @@ def evaluate_inference(
     val_batches_count = val_dataset_count / args.batch_size
 
     epe_errors = [[0 for _ in photometric_metrics] for _ in range(model.max_iterations)]
-    epe_errors_near_fault = [[0 for _ in photometric_metrics] for _ in range(model.max_iterations)]  #  Not used for now
-    epe_errors_away_fault = [[0 for _ in photometric_metrics] for _ in range(model.max_iterations)]  #  Not used for now
-    smoothness_errors = [[0 for _ in range(2*len(smoothness_metrics))] for _ in range(model.max_iterations)]
-    smoothness_errors_near_fault = [[0 for _ in range(2*len(smoothness_metrics))] for _ in range(model.max_iterations)]
-    smoothness_errors_away_fault = [[0 for _ in range(2*len(smoothness_metrics))] for _ in range(model.max_iterations)]
+    epe_errors_near_fault = [[0 for _ in photometric_metrics] for _ in range(model.max_iterations)]  # Not used for now
+    epe_errors_away_fault = [[0 for _ in photometric_metrics] for _ in range(model.max_iterations)]  # Not used for now
+    smoothness_errors = [[0 for _ in range(2 * len(smoothness_metrics))] for _ in range(model.max_iterations)]
+    smoothness_errors_near_fault = [[0 for _ in range(2 * len(smoothness_metrics))] for _ in
+                                    range(model.max_iterations)]
+    smoothness_errors_away_fault = [[0 for _ in range(2 * len(smoothness_metrics))] for _ in
+                                    range(model.max_iterations)]
 
     if args.regularization:
         import prox_tv as ptv
@@ -102,8 +107,10 @@ def evaluate_inference(
     for i_loader, batchv in enumerate(tqdm(loader)):
         batch_input = batchv['pre_post_image'].to(device, non_blocking=args.non_blocking)
         batch_target = batchv['target_dm'].to(device, non_blocking=args.non_blocking) if 'target_dm' in batchv else None
-        batch_near_fault = batchv['fault_boundary'].to(device, non_blocking=args.non_blocking) if args.fault_boundary_dir is not None else None
-        batch_images_no_normalization = batchv['pre_post_image_no_normalization'].to(device, non_blocking=args.non_blocking)
+        batch_near_fault = batchv['fault_boundary'].to(device,
+                                                       non_blocking=args.non_blocking) if args.fault_boundary_dir is not None else None
+        batch_images_no_normalization = batchv['pre_post_image_no_normalization'].to(device,
+                                                                                     non_blocking=args.non_blocking)
         batch_frame_ids = batchv['frame_id']
         batch_scaling_factors = batchv['scaling_factor'] if args.dataset_name.lower() == "faultdeform" else None
 
@@ -114,26 +121,28 @@ def evaluate_inference(
             input_model = batch_input
         else:
             b, c, h, w = batch_input.shape
-            input_model = torch.cat([batch_input, batch_images_no_normalization[:, 1].view(b, 1, h, w), batch_images_no_normalization[:, 0].view(b, 1, h, w)], dim=1)
+            input_model = torch.cat([batch_input, batch_images_no_normalization[:, 1].view(b, 1, h, w),
+                                     batch_images_no_normalization[:, 0].view(b, 1, h, w)], dim=1)
 
-        frame_labels = get_frame_labels(batch_frame_ids, batch_scaling_factors, args.dataset_name, frame_names=frame_names)
+        frame_labels = get_frame_labels(batch_frame_ids, batch_scaling_factors, args.dataset_name,
+                                        frame_names=frame_names)
 
         with torch.no_grad():
             with torch.cuda.amp.autocast(enabled=args.amp, dtype=torch.float16):
                 optical_flow_predictions = model.forward(
                     input_model,
                     ptv=ptv,
-                    args=args, 
-                    save=args.save_images, 
-                    frame_labels=frame_labels, 
-                    crs_meta_data=crs_meta_data, 
+                    args=args,
+                    save=args.save_images,
+                    frame_labels=frame_labels,
+                    crs_meta_data=crs_meta_data,
                     transform_meta_data=transform_meta_data
                 )
 
                 if args.save_metrics:
                     if batch_target is None:
                         raise error("To compute the metrics, you need to define the groundtruth / target flow")
-                    
+
                     # The metrics are computed on the cropped image to avoid border effects with the cosi-corr baseline
                     crop_slice = slice(args.eval_crop_size, -args.eval_crop_size or None)
                     batch_target_cropped = batch_target[:, :, crop_slice, crop_slice]
@@ -153,7 +162,7 @@ def evaluate_inference(
                                 iteration_prediction = optical_flow_predictions[iteration]
                                 iteration_prediction_cropped = iteration_prediction[:, :, crop_slice, crop_slice]
 
-                                # Smoothness errors for prediction 
+                                # Smoothness errors for prediction
                                 update_errors(
                                     metric=metric,
                                     prediction=iteration_prediction_cropped,
@@ -179,13 +188,13 @@ def evaluate_inference(
 
     if args.save_metrics:
         model_name = args.pretrained_model_filename.split("/")[-1]
-        scaling_factor_name= "_".join(args.split_scaling_factors)
+        scaling_factor_name = "_".join(args.split_scaling_factors)
         regularization_name = f"_{args.penalty_function}_l{args.reg_lambda}_i{args.reg_iterations}" if args.regularization else ""
 
         metrics = compute_all_metrics(
-            args, model.max_iterations, epe_errors, smoothness_errors, smoothness_errors_near_fault, 
+            args, model.max_iterations, epe_errors, smoothness_errors, smoothness_errors_near_fault,
             smoothness_errors_away_fault, epe_errors_near_fault, epe_errors_away_fault
-            )
+        )
 
         save_metrics(args, model_name, scaling_factor_name, regularization_name, metrics)
 
@@ -201,21 +210,22 @@ def evaluate_inference_from_estimates(
     val_batches_count = val_dataset_count / args.batch_size
 
     epe_errors = [[0 for _ in photometric_metrics] for _ in range(1)]
-    epe_errors_near_fault = [[0 for _ in photometric_metrics] for _ in range(1)]  #  Not used for now
-    epe_errors_away_fault = [[0 for _ in photometric_metrics] for _ in range(1)]  #  Not used for now
-    smoothness_errors = [[0 for _ in range(2*len(smoothness_metrics))] for _ in range(1)]
-    smoothness_errors_near_fault = [[0 for _ in range(2*len(smoothness_metrics))] for _ in range(1)]
-    smoothness_errors_away_fault = [[0 for _ in range(2*len(smoothness_metrics))] for _ in range(1)]
+    epe_errors_near_fault = [[0 for _ in photometric_metrics] for _ in range(1)]  # Not used for now
+    epe_errors_away_fault = [[0 for _ in photometric_metrics] for _ in range(1)]  # Not used for now
+    smoothness_errors = [[0 for _ in range(2 * len(smoothness_metrics))] for _ in range(1)]
+    smoothness_errors_near_fault = [[0 for _ in range(2 * len(smoothness_metrics))] for _ in range(1)]
+    smoothness_errors_away_fault = [[0 for _ in range(2 * len(smoothness_metrics))] for _ in range(1)]
 
     for _, batchv in enumerate(tqdm(loader)):
         optical_flow_predictions = batchv['estimated_dm'].to(device, non_blocking=args.non_blocking)
         batch_target = batchv['target_dm'].to(device, non_blocking=args.non_blocking) if 'target_dm' in batchv else None
-        batch_near_fault = batchv['fault_boundary'].to(device, non_blocking=args.non_blocking) if args.fault_boundary_dir is not None else None
+        batch_near_fault = batchv['fault_boundary'].to(device,
+                                                       non_blocking=args.non_blocking) if args.fault_boundary_dir is not None else None
 
         if args.save_metrics:
             if batch_target is None:
                 raise error("To compute the metrics, you need to define the groundtruth / target flow")
-                    
+
         # The metrics are computed on the cropped image to avoid border effects with the cosi-corr baseline
         crop_slice = slice(args.eval_crop_size, -args.eval_crop_size or None)
         batch_target_cropped = batch_target[:, :, crop_slice, crop_slice]
@@ -235,7 +245,7 @@ def evaluate_inference_from_estimates(
                     iteration_prediction = optical_flow_predictions
                     iteration_prediction_cropped = iteration_prediction[:, :, crop_slice, crop_slice]
 
-                    # Smoothness errors for prediction 
+                    # Smoothness errors for prediction
                     update_errors(
                         metric=metric,
                         prediction=iteration_prediction_cropped,
@@ -265,9 +275,9 @@ def evaluate_inference_from_estimates(
         regularization_name = f"_{args.penalty_function}_l{args.reg_lambda}_i{args.reg_iterations}" if args.regularization else ""
 
         metrics = compute_all_metrics(
-            args, 1, epe_errors, smoothness_errors, smoothness_errors_near_fault, 
+            args, 1, epe_errors, smoothness_errors, smoothness_errors_near_fault,
             smoothness_errors_away_fault, epe_errors_near_fault, epe_errors_away_fault
-            )
+        )
 
         save_metrics(args, model_name, scaling_factor_name, regularization_name, metrics)
 
@@ -286,6 +296,14 @@ def evaluate_inference_large_image(
         ptv = None
 
     height, width, window_overlap, window_size, image_pair_name = loader.dataset.get_image_info()
+
+    offset_max = int(np.min(window_size / 2, window_overlap / 2))
+    if args.offset is None:
+        offset = offset_max
+    else:
+        offset = int(np.min(args.offset, offset_max))
+    print('Removing boundary pixels, with offset = ', offset)
+
     full_optical_flow = np.zeros((2, height, width))
     counts_image = np.zeros((2, height, width))
 
@@ -297,7 +315,8 @@ def evaluate_inference_large_image(
     count = 0
     for _, batchv in enumerate(tqdm(loader)):
         batch_input = batchv['pre_post_image'].to(device, non_blocking=args.non_blocking)
-        batch_images_no_normalization = batchv['pre_post_image_no_normalization'].to(device, non_blocking=args.non_blocking)
+        batch_images_no_normalization = batchv['pre_post_image_no_normalization'].to(device,
+                                                                                     non_blocking=args.non_blocking)
         batch_x_positions = batchv['x_position']
         batch_y_positions = batchv['y_position']
         nan_mask = batchv['nan_mask'].unsqueeze(1).expand_as(batch_input)
@@ -310,7 +329,8 @@ def evaluate_inference_large_image(
             input_model = batch_input
         else:
             b, c, h, w = batch_input.shape
-            input_model = torch.cat([batch_input, batch_images_no_normalization[:, 1].view(b, 1, h, w), batch_images_no_normalization[:, 0].view(b, 1, h, w)], dim=1)
+            input_model = torch.cat([batch_input, batch_images_no_normalization[:, 1].view(b, 1, h, w),
+                                     batch_images_no_normalization[:, 0].view(b, 1, h, w)], dim=1)
 
         with torch.no_grad():
             with torch.cuda.amp.autocast(enabled=args.amp, dtype=torch.float16):
@@ -334,15 +354,16 @@ def evaluate_inference_large_image(
             max_y = y_pos + window_size
 
             # with stride
-            full_optical_flow[:, min_y:max_y, min_x: max_x] += last_iteration_prediction[i_batch]
-            counts_image[:, min_y:max_y, min_x: max_x] += 1
+            full_optical_flow[:, min_y + offset:max_y - offset, min_x + offset: max_x - offset] \
+                += last_iteration_prediction[i_batch, :, offset:-offset, offset:-offset]
+            counts_image[:, min_y + offset:max_y - offset, min_x + offset: max_x - offset] += 1
 
     t1 = time.time()
     print(f"load data {t1 - t0} count no data={count}")
 
-    mask = np.isnan(full_optical_flow) | (counts_image==0)
+    mask = np.isnan(full_optical_flow) | (counts_image == 0)
     full_optical_flow[mask] = np.nan
-    counts_image[counts_image==0] = 1  # will be divided by counts_image
+    counts_image[counts_image == 0] = 1  # will be divided by counts_image
 
     flow_to_enumerate = [full_optical_flow]
 
@@ -377,13 +398,14 @@ def evaluate_inference_large_image(
         save_array_to_tiff(
             of[0].astype(np.float32),
             os.path.join(args.save_dir, ew_filename), transform=transform_meta_datas, crs=crs_meta_datas
-            )
+        )
 
-        ns_filename = f"{image_pair_name}_{config_name}_ns_i{i_of}.tif".replace("__", "_")  # replace __ in case the pre filename already contains the "_" char
+        ns_filename = f"{image_pair_name}_{config_name}_ns_i{i_of}.tif".replace("__",
+                                                                                "_")  # replace __ in case the pre filename already contains the "_" char
         save_array_to_tiff(
             of[1].astype(np.float32),
             os.path.join(args.save_dir, ns_filename), transform=transform_meta_datas, crs=crs_meta_datas
-            )
+        )
 
         print(f"ew_filename {os.path.join(args.save_dir, ew_filename)}")
         print(f"ns_filename {os.path.join(args.save_dir, ns_filename)}")
@@ -407,7 +429,8 @@ def update_errors(metric, prediction, target, errors, errors_near_fault, errors_
     errors_away_fault[index] += error_away_fault.item() / val_dataset_count
 
 
-def compute_all_metrics(args, max_iterations, epe_errors, smoothness_errors, smoothness_errors_near_fault, smoothness_errors_away_fault, epe_errors_near_fault, epe_errors_away_fault):
+def compute_all_metrics(args, max_iterations, epe_errors, smoothness_errors, smoothness_errors_near_fault,
+                        smoothness_errors_away_fault, epe_errors_near_fault, epe_errors_away_fault):
     """
     Compute evaluation metrics (EPE and smoothness) for global, near_fault and non-near_fault regions.
     """
@@ -427,10 +450,11 @@ def compute_all_metrics(args, max_iterations, epe_errors, smoothness_errors, smo
     else:
         # Initialize all metrics to None when not computing near_fault metrics
         epe_near_fault = epe_away_fault = None
-        l2 = l2_near_fault = l2_away_fault = None  
+        l2 = l2_near_fault = l2_away_fault = None
         l2_gt = l2_gt_near_fault = l2_gt_away_fault = None
 
-    return [epe, epe_near_fault, epe_away_fault, l2, l2_near_fault, l2_away_fault, l2_gt, l2_gt_near_fault, l2_gt_away_fault]
+    return [epe, epe_near_fault, epe_away_fault, l2, l2_near_fault, l2_away_fault, l2_gt, l2_gt_near_fault,
+            l2_gt_away_fault]
 
 
 def compute_metrics(metrics_list, steps, index):
@@ -445,15 +469,17 @@ def save_metrics(args, model_name, scaling_factor_name, regularization_name, met
     Save the computed metrics to a file.
     """
     epe, epe_near_fault, epe_away_fault, l2, l2_near_fault, l2_away_fault, l2_gt, l2_gt_near_fault, l2_gt_away_fault = metrics
-    
+
     # define columns
     base_columns = [
-        model_name, scaling_factor_name, str(args.image_size), regularization_name, str(args.fault_boundary_disk), str(args.eval_crop_size), 
+        model_name, scaling_factor_name, str(args.image_size), regularization_name, str(args.fault_boundary_disk),
+        str(args.eval_crop_size),
         str(args.split_count), epe
     ]
     additional_columns = []
     if args.near_fault_only:
-        additional_columns = [epe_near_fault, epe_away_fault, l2, l2_near_fault, l2_away_fault, l2_gt, l2_gt_near_fault, l2_gt_away_fault]
+        additional_columns = [epe_near_fault, epe_away_fault, l2, l2_near_fault, l2_away_fault, l2_gt, l2_gt_near_fault,
+                              l2_gt_away_fault]
     columns = base_columns + additional_columns
 
     # save metric file
@@ -471,4 +497,3 @@ def get_frame_labels(frame_ids, scaling_factors, dataset_name, frame_names=None)
     else:
         frame_labels = [f"{f:06d}" for f in frame_ids]
     return frame_labels
-
