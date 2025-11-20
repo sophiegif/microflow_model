@@ -30,7 +30,7 @@ def parse_args():
     # Inference specific parameters
     parser.add_argument('--seed', default=1, type=int, help='Seed used for the random number generators')
     parser.add_argument('--pretrained_model_filename', help='Filename containing the pretrained weights associated with the config')
-    parser.add_argument('--dat[aset_dir', help='path to the dir containing the real examples')
+    parser.add_argument('--dataset_dir', help='path to the dir containing the real examples')
     parser.add_argument('--save_dir', default=None, help="dir where to save the flow estimates")
     
     parser.add_argument('--window_size', default=1024, type=int, help='Sliding window size (useful when the image is large)')  

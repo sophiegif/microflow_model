@@ -297,11 +297,11 @@ def evaluate_inference_large_image(
 
     height, width, window_overlap, window_size, image_pair_name = loader.dataset.get_image_info()
 
-    offset_max = int(np.min(window_size / 2, window_overlap / 2))
+    offset_max = int(np.min([window_size / 2, window_overlap / 2]))
     if args.offset is None:
         offset = offset_max
     else:
-        offset = int(np.min(args.offset, offset_max))
+        offset = int(np.min([args.offset, offset_max]))
     print('Removing boundary pixels, with offset = ', offset)
 
     full_optical_flow = np.zeros((2, height, width))
