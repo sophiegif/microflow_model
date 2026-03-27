@@ -32,7 +32,8 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     parser = ConfigArgumentParser('inference fault deform')
-    parser.add_argument('--train_config_name', default='microflow')
+    parser.add_argument('--train_config_name', default='irseparated_geoflownet_intermediatel1_noreg')
+    parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu', help='Device to use (e.g. cuda or cpu)')
     
     # Inference specific parameters
     parser.add_argument('--seed', default=1, type=int, help='Seed used for the random number generators')
@@ -77,7 +78,7 @@ def run_inference(args):
     fix_seed(args.seed)
 
     # Define device
-    device = torch.device('cuda')
+    device = torch.device(args.device)
 
     # Load models
     optical_flow_model = load_model(args, device)

@@ -28,8 +28,9 @@ def evaluate_training(args, device, model, val_loader=None, loss_function=None, 
         input_model = torch.cat(
             [val_input, images_no_normalization[:, 1].view(b, 1, h, w), images_no_normalization[:, 0].view(b, 1, h, w)],
             dim=1)
-        with (torch.no_grad()):
-            with torch.cuda.amp.autocast(enabled=args.amp, dtype=torch.float16):
+        with torch.no_grad():
+            device_type = 'cuda' if device.type == 'cuda' else 'cpu'
+            with torch.autocast(device_type=device_type, enabled=(args.amp and device_type == 'cuda'), dtype=torch.float16 if device_type == 'cuda' else torch.bfloat16):
                 optical_flow_predictions = model(input_model, args=args)
 
                 if loss_function is not None:
@@ -128,7 +129,8 @@ def evaluate_inference(
                                         frame_names=frame_names)
 
         with torch.no_grad():
-            with torch.cuda.amp.autocast(enabled=args.amp, dtype=torch.float16):
+            device_type = 'cuda' if device.type == 'cuda' else 'cpu'
+            with torch.autocast(device_type=device_type, enabled=(args.amp and device_type == 'cuda'), dtype=torch.float16 if device_type == 'cuda' else torch.bfloat16):
                 optical_flow_predictions = model.forward(
                     input_model,
                     ptv=ptv,
@@ -313,7 +315,13 @@ def evaluate_inference_large_image(
 
     t0 = time.time()
     count = 0
+    t_data, t_transfer, t_forward, t_cpu = 0.0, 0.0, 0.0, 0.0
+    t_iter_start = time.time()
+
     for _, batchv in enumerate(tqdm(loader)):
+        t_data += time.time() - t_iter_start
+
+        ta = time.time()
         batch_input = batchv['pre_post_image'].to(device, non_blocking=args.non_blocking)
         batch_images_no_normalization = batchv['pre_post_image_no_normalization'].to(device,
                                                                                      non_blocking=args.non_blocking)
@@ -323,6 +331,7 @@ def evaluate_inference_large_image(
 
         if torch.sum(torch.abs(batch_input)) == 0:  # for regions where there is no data
             count += 1
+            t_iter_start = time.time()
             continue
 
         if args.model_name.lower() == "raft":
@@ -331,17 +340,31 @@ def evaluate_inference_large_image(
             b, c, h, w = batch_input.shape
             input_model = torch.cat([batch_input, batch_images_no_normalization[:, 1].view(b, 1, h, w),
                                      batch_images_no_normalization[:, 0].view(b, 1, h, w)], dim=1)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        t_transfer += time.time() - ta
 
+        tb = time.time()
         with torch.no_grad():
-            with torch.cuda.amp.autocast(enabled=args.amp, dtype=torch.float16):
-                optical_flow_predictions = model(
+            device_type = 'cuda' if device.type == 'cuda' else 'cpu'
+            with torch.autocast(device_type=device_type, enabled=(args.amp and device_type == 'cuda'), dtype=torch.float16 if device_type == 'cuda' else torch.bfloat16):
+                result = model(
                     input_model,
                     ptv=ptv,
                     args=args,
                     save=False,
                     test_mode=False
                 )
+                # SeaRAFT returns (flow_predictions, nf_predictions); iterative models return a plain list
+                if args.model_name.lower().startswith("searaft"):
+                    optical_flow_predictions, _ = result
+                else:
+                    optical_flow_predictions = result
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        t_forward += time.time() - tb
 
+        tc = time.time()
         last_iteration_prediction = optical_flow_predictions[-1].cpu().numpy()
         last_iteration_prediction[nan_mask] = np.nan
 
@@ -353,13 +376,41 @@ def evaluate_inference_large_image(
             min_y = y_pos
             max_y = y_pos + window_size
 
-            # with stride
-            full_optical_flow[:, min_y + offset:max_y - offset, min_x + offset: max_x - offset] \
-                += last_iteration_prediction[i_batch, :, offset:-offset, offset:-offset]
-            counts_image[:, min_y + offset:max_y - offset, min_x + offset: max_x - offset] += 1
+            # Calculate actual bounds within the full image
+            valid_min_x = max(0, min_x + offset)
+            valid_max_x = min(width, max_x - offset)
+            valid_min_y = max(0, min_y + offset)
+            valid_max_y = min(height, max_y - offset)
+
+            if valid_min_x >= valid_max_x or valid_min_y >= valid_max_y:
+                continue
+
+            # Calculate the relative slicing for the patch prediction
+            pred_min_x = valid_min_x - min_x
+            pred_max_x = valid_max_x - min_x
+            pred_min_y = valid_min_y - min_y
+            pred_max_y = valid_max_y - min_y
+
+            # Add prediction to the valid area
+            patch_pred = last_iteration_prediction[i_batch, :, pred_min_y:pred_max_y, pred_min_x:pred_max_x]
+            
+            # Ensure shape matches in case the prediction tensor was smaller (like in-memory fallback truncation)
+            h_slice = min(valid_max_y - valid_min_y, patch_pred.shape[1])
+            w_slice = min(valid_max_x - valid_min_x, patch_pred.shape[2])
+
+            full_optical_flow[:, valid_min_y:valid_min_y+h_slice, valid_min_x:valid_min_x+w_slice] += patch_pred[:, :h_slice, :w_slice]
+            counts_image[:, valid_min_y:valid_min_y+h_slice, valid_min_x:valid_min_x+w_slice] += 1
+        t_cpu += time.time() - tc
+
+        t_iter_start = time.time()
 
     t1 = time.time()
-    print(f"load data {t1 - t0} count no data={count}")
+    print(f"load data {t1 - t0:.2f}s  count no data={count}")
+    print(f"  DataLoader wait : {t_data:.2f}s")
+    print(f"  GPU transfer    : {t_transfer:.2f}s")
+    print(f"  Model forward   : {t_forward:.2f}s  ← GPU compute")
+    print(f"  CPU copy+accumulate: {t_cpu:.2f}s")
+
 
     mask = np.isnan(full_optical_flow) | (counts_image == 0)
     full_optical_flow[mask] = np.nan

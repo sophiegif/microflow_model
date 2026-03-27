@@ -4,6 +4,7 @@ from src.dataloaders.datasets.fault_deform_dataset import FaultDeformDataset
 from src.dataloaders.datasets.prediction_dataset import PredictionDataset
 from src.dataloaders.datasets.real_example_dataset import RealExampleDataset
 from src.dataloaders.datasets.real_example_large_dataset import RealExampleLargeDataset
+from src.dataloaders.datasets.real_example_large_dataset_onthefly import RealExampleLargeDatasetOnTheFly
 from src.dataloaders.transform import get_inference_transforms, get_train_transforms, get_inference_from_estimates_transforms
 
 
@@ -27,7 +28,6 @@ def get_inference_dataloader(args):
         crop_names, crs_meta_datas, transform_meta_datas = None, None, None
     elif args.dataset_name.lower() == "real_examples":
         crop_names = [f for f in os.listdir(args.dataset_dir) if f.startswith("corr_landsat8_01")]
-        # crop_names = [f for f in os.listdir(args.dataset_dir) if f.startswith("corr_ads80_01") or f.startswith("corr_landsat8_01")]
         inference_set = RealExampleDataset(
             args.dataset_dir,
             transform=inference_transform,
@@ -35,9 +35,7 @@ def get_inference_dataloader(args):
             post_template="post.tif",
             crop_names=crop_names
         )
-        # the metadata are loaded outside of the dataloader because they are at a rasterio format, 
-        # not compatible with tensors, numpy arrays, numbers, dicts or lists
-        crs_meta_datas, transform_meta_datas = inference_set.get_tiff_metadata()  
+        crs_meta_datas, transform_meta_datas = inference_set.get_tiff_metadata()
     elif args.dataset_name.lower() == "estimate_faultdeform":
         inference_transform = get_inference_from_estimates_transforms(args.image_size)
         frame_ids = [f.split("_")[0] for f in os.listdir(args.estimation_root_dir)] 
@@ -70,23 +68,39 @@ def get_inference_dataloader(args):
 
 def get_real_examples_dataloader(args):
     """
-    Create and return the inference dataloader with appropriate transforms and dataset.
+    Create and return the inference dataloader for large real satellite images.
+    Supports sliding-window inference on large tiffs.
     """
-    inference_transform = get_inference_transforms(args.window_size)
+    normalization = getattr(args, 'normalization', 'minmax')
+    print(args.dataset_name.lower())
+    if args.dataset_name.lower() == "real_examples_onthefly":
+        inference_transform = get_inference_transforms(args.window_size, normalization)
+        inference_set = RealExampleLargeDatasetOnTheFly(
+            args.dataset_dir,
+            transform=inference_transform,
+            pre_template="pre.tif",
+            post_template="post.tif",
+            top=0,
+            left=0,
+            window_size=args.window_size,
+            window_overlap=args.stride
+        )
+    else:
+        # Default: use the original preloaded dataset
+        inference_transform = get_inference_transforms(args.window_size, normalization)
+        inference_set = RealExampleLargeDataset(
+            args.dataset_dir,
+            transform=inference_transform,
+            pre_template="pre.tif",
+            post_template="post.tif",
+            top=0,
+            left=0,
+            window_size=args.window_size,
+            window_overlap=args.stride
+        )
 
-    inference_set = RealExampleLargeDataset(
-        args.dataset_dir,
-        transform=inference_transform,
-        pre_template="pre.tif",
-        post_template="post.tif",
-        top=0, 
-        left=0, 
-        window_size=args.window_size, 
-        window_overlap=args.stride
-    )
-    # the metadata are loaded outside of the dataloader because they are at a rasterio format, 
-    # not compatible with tensors, numpy arrays, numbers, dicts or lists
-    crs_meta_datas, transform_meta_datas = inference_set.get_tiff_metadata()  
+    # Metadata is loaded outside the dataloader (rasterio format, not tensor-compatible)
+    crs_meta_datas, transform_meta_datas = inference_set.get_tiff_metadata()
 
     inference_loader = torch.utils.data.DataLoader(
         dataset=inference_set,

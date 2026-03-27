@@ -28,8 +28,9 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     parser = ConfigArgumentParser('training on fault deform')
-    parser.add_argument('--train_config_name', default='data/configs/train/microflow.yaml')
+    parser.add_argument('--train_config_name', default='irseparated_geoflownet_intermediatel1_noreg')
     parser.add_argument('--seed', default=1, type=int, help='Seed used for the random number generators')
+    parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu', help='Device to use (e.g. cuda or cpu)')
     
     # directories parameters
     parser.add_argument('--split_dir', type=str, help='directory containing the dataset splits')
@@ -109,7 +110,7 @@ def run_train(args):
     fix_seed(args.seed)
 
     # Define device
-    device = torch.device('cuda')
+    device = torch.device(args.device)
 
     # Load model
     model = load_model(args, device)
